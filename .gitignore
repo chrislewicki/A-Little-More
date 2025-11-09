@@ -1,3 +1,6 @@
 package.json
 src/pkjs/index.js
 src/pkjs/config.js
+
+node_modules/
+.lock*
