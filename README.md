@@ -1,7 +1,7 @@
 # A-Little-More
 
 ## How to compile
-- Rename "index.example.js" to "index.js" and provide your own API key if you want the weather stuff to work.
+- Rename "index.example.js" to "index.js" and provide your own OpenWeatherMap API key if you want the weather stuff to work.
 - Build as normal for a Pebble app. I use the local SDK because I'm cool, but you can use the CloudPebble Codespace: https://codespaces.new/coredevices/codespaces-pebble?quickstart=1
 
 ## TODO
