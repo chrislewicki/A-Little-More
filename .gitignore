@@ -1,4 +1,5 @@
 package.json
+package-lock.json
 src/pkjs/index.js
 src/pkjs/config.js
 
