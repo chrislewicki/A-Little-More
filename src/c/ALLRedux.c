@@ -132,7 +132,7 @@ static void main_window_load(Window *window) {
 
     // Bottom-left: weekday "Tuesday"
     s_day_layer = text_layer_create(GRect(0, bounds.size.h - 60,
-                                            bounds.size.w / 2, 30));
+                                            bounds.size.w, 30));
     text_layer_set_background_color(s_day_layer, GColorClear);
     text_layer_set_text_color(s_day_layer, GColorWhite);
     text_layer_set_text_alignment(s_day_layer, GTextAlignmentLeft);
