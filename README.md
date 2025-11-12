@@ -5,7 +5,7 @@
 - Build as normal for a Pebble app. I use the local SDK because I'm really cool, but you can use the CloudPebble Codespace if you're sane: https://codespaces.new/coredevices/codespaces-pebble?quickstart=1
 
 ## TODO
-- Fix "Wednesd..."
+- Fix "Wednesd..." (done)
 - Clay config page
   - Temperature unit toggle
   - Easier API key specification
