@@ -1,14 +1,14 @@
 # A-Little-More
 
 ## How to compile
-- Rename "index.example.js" to "index.js" and provide your own OpenWeatherMap API key if you want the weather stuff to work.
+- Rename "index.nokey.js" to "index.js" and provide your own OpenWeatherMap API key if you want the weather stuff to work.
 - Build as normal for a Pebble app. I use the local SDK because I'm really cool, but you can use the CloudPebble Codespace if you're sane: https://codespaces.new/coredevices/codespaces-pebble?quickstart=1
 
 ## TODO
 - Fix "Wednesd..." (done)
-- Clay config page
-  - Temperature unit toggle
-  - Easier API key specification
+- Clay config page (kinda done)
+  - Temperature unit toggle (done)
+  - Easier API key specification (done)
   - Colors for Basalt/Chalk/Emery?
   - Inversion for Aplite/Diorite/Flint?
 - Figure out where to put weather conditions
