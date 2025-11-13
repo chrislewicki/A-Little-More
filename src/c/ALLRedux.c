@@ -1,11 +1,33 @@
 #include <pebble.h>
 
+#define SETTINGS_KEY 1
+
 static Window     *s_main_window;
 static TextLayer  *s_time_layer;
 static TextLayer  *s_battery_layer;
 static TextLayer  *s_weather_layer;
 static TextLayer  *s_day_layer;
 static TextLayer  *s_date_layer;
+
+typedef struct ClaySettings {
+    bool use_celsius;
+    char apikey[64];
+} ClaySettings;
+
+static ClaySettings settings;
+
+static void load_settings(void) {
+  if (persist_exists(SETTINGS_KEY)) {
+    persist_read_data(SETTINGS_KEY, &settings, sizeof(settings));
+  } else {
+    settings.use_celsius = false;
+    settings.apikey[0] = '\0';
+  }
+}
+
+static void save_settings(void) {
+  persist_write_data(SETTINGS_KEY, &settings, sizeof(settings));
+}
 
 static void update_time() {
     time_t temp = time(NULL);
@@ -61,18 +83,54 @@ static void inbox_received_callback(DictionaryIterator *iterator, void *context)
     static char conditions_buffer[32];
     static char weather_layer_buffer[32];
 
-    Tuple *tempc_tuple = dict_find(iterator, MESSAGE_KEY_TEMPERATUREC);
-    Tuple *tempf_tuple = dict_find(iterator, MESSAGE_KEY_TEMPERATUREF);
+    // Weather data (sent by the JS when it fetches)
+    Tuple *tempc_tuple      = dict_find(iterator, MESSAGE_KEY_TEMPERATUREC);
+    Tuple *tempf_tuple      = dict_find(iterator, MESSAGE_KEY_TEMPERATUREF);
     Tuple *conditions_tuple = dict_find(iterator, MESSAGE_KEY_CONDITIONS);
 
-    if (tempc_tuple && tempf_tuple && conditions_tuple) {
-        snprintf(temperaturec_buffer, sizeof(temperaturec_buffer), "%d°C", (int)tempc_tuple->value->int32);
-        snprintf(temperaturef_buffer, sizeof(temperaturef_buffer), "%d°F", (int)tempf_tuple->value->int32);
-        snprintf(conditions_buffer, sizeof(conditions_buffer), "%s", conditions_tuple->value->cstring);
+    // Clay settings (sent when the user saves config)
+    Tuple *use_celsius_tuple = dict_find(iterator, MESSAGE_KEY_USECELSIUS);
+    Tuple *apikey_tuple      = dict_find(iterator, MESSAGE_KEY_APIKEY);
+
+    // Update settings from Clay values if present
+    bool settings_changed = false;
+
+    if (use_celsius_tuple) {
+        settings.use_celsius = (use_celsius_tuple->value->int32 != 0);
+        settings_changed = true;
     }
 
-    snprintf(weather_layer_buffer, sizeof(weather_layer_buffer), "%s", temperaturef_buffer);
-    text_layer_set_text(s_weather_layer, weather_layer_buffer);
+    if (apikey_tuple) {
+        strncpy(settings.apikey,
+                apikey_tuple->value->cstring,
+                sizeof(settings.apikey) - 1);
+        settings.apikey[sizeof(settings.apikey) - 1] = '\0';
+        settings_changed = true;
+    }
+
+    if (settings_changed) {
+        save_settings();
+    }
+
+    // If this message also carries weather data, update the display
+    if (tempc_tuple && tempf_tuple) {
+        snprintf(temperaturec_buffer, sizeof(temperaturec_buffer),
+                 "%d°C", (int)tempc_tuple->value->int32);
+        snprintf(temperaturef_buffer, sizeof(temperaturef_buffer),
+                 "%d°F", (int)tempf_tuple->value->int32);
+
+        if (conditions_tuple) {
+            snprintf(conditions_buffer, sizeof(conditions_buffer),
+                     "%s", conditions_tuple->value->cstring);
+            // If you eventually want to show conditions, use conditions_buffer.
+        }
+
+        bool use_celsius = settings.use_celsius;
+
+        snprintf(weather_layer_buffer, sizeof(weather_layer_buffer), "%s",
+                 use_celsius ? temperaturec_buffer : temperaturef_buffer);
+        text_layer_set_text(s_weather_layer, weather_layer_buffer);
+    }
 }
 
 static void inbox_dropped_callback(AppMessageResult reason, void *context) {
@@ -165,17 +223,23 @@ static void main_window_unload(Window *window) {
 
 
 static void init(void) {
-    //blow me
+    // Load persisted Clay settings (or defaults)
+    load_settings();
+
+    // AppMessage setup
     app_message_register_inbox_received(inbox_received_callback);
-    const int inbox_size = 256;
-    const int outbox_size = 128;
-    app_message_open(inbox_size, outbox_size);
     app_message_register_inbox_dropped(inbox_dropped_callback);
     app_message_register_outbox_failed(outbox_failed_callback);
     app_message_register_outbox_sent(outbox_sent_callback);
 
+    const int inbox_size = 256;
+    const int outbox_size = 128;
+    app_message_open(inbox_size, outbox_size);
+
+    // Window and layers
     s_main_window = window_create();
     window_set_window_handlers(s_main_window, (WindowHandlers) {
+
         .load = main_window_load,
         .unload = main_window_unload
     });
