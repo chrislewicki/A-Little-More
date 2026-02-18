@@ -2,7 +2,7 @@ var Clay       = require('pebble-clay');
 var clayConfig = require('./config');
 var clay       = new Clay(clayConfig);
 
-var DEFAULT_API_KEY = 'YOU REALLY THOUGHT';
+var DEFAULT_API_KEY = 'YOU THOUGHT';
 
 // ---------- Clay settings helpers ----------
 

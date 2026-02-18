@@ -11,10 +11,10 @@
   - Easier API key specification (done)
   - Colors for Basalt/Chalk/Emery?
   - Inversion for Aplite/Diorite/Flint?
-- Figure out where to put weather conditions
-  - Because we do fetch them
-  - And then do literally nothing with them
-  - So once I figure that out, stick in a toggle for it on the Clay page
+- Figure out where to put weather conditions (done)
+  - Because we do fetch them (yeah)
+  - And then do literally nothing with them (tru!)
+  - So once I figure that out, stick in a toggle for it on the Clay page (done)
  
 ## FAQ
 ### This face sucks!
