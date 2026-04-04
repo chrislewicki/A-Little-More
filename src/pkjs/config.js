@@ -10,6 +10,8 @@ var quadrantOptions = [
   { label: 'Active time',  value: '8'  },
   { label: 'Heart rate',   value: '9'  },
   { label: 'Seconds',      value: '10' },
+  { label: 'Bluetooth',    value: '11' },
+  { label: 'Week number',  value: '12' },
 ];
 
 module.exports = [
@@ -58,6 +60,10 @@ module.exports = [
       {
         type: 'text',
         defaultValue: 'Steps, distance, active time, and heart rate require a watch that supports Pebble Health. Heart rate also requires a watch with a heart rate sensor.'
+      },
+      {
+        type: 'text',
+        defaultValue: 'Selecting "Seconds" for any slot updates the display every second instead of every minute, which will noticeably increase battery drain.'
       }
     ]
   },

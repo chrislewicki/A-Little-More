@@ -24,6 +24,8 @@ typedef enum {
   QUAD_ACTIVE_MINS = 8,
   QUAD_HEART_RATE  = 9,
   QUAD_SECONDS     = 10,
+  QUAD_BLUETOOTH   = 11,
+  QUAD_WEEK        = 12,
 } QuadrantContent;
 
 // ─── Persistent settings ────────────────────────────────────────────────────
@@ -46,13 +48,17 @@ static char       s_quad_buf[4][32];
 
 // ─── Data store ─────────────────────────────────────────────────────────────
 
-static int  s_batt_pct      = 0;
-static int  s_temp_c        = 0;
-static int  s_temp_f        = 0;
+static int  s_batt_pct       = 0;
+static bool s_batt_charging  = false;
+static int  s_temp_c         = 0;
+static int  s_temp_f         = 0;
+static bool s_weather_loaded = false;
 static char s_conditions[32] = "--";
 static char s_day_str[16]    = "";
 static char s_date_str[16]   = "";
+static char s_week_str[6]    = "";
 static char s_seconds_str[4] = ":00";
+static bool s_bt_connected   = false;
 
 #if defined(PBL_HEALTH)
 static int  s_steps       = 0;
@@ -88,12 +94,21 @@ static void render_quadrant(int idx) {
 
   switch ((QuadrantContent)settings.quad[idx]) {
     case QUAD_BATTERY:
-      snprintf(buf, 32, "%d%%", s_batt_pct);
+      if (s_batt_charging && s_batt_pct == 100)
+        snprintf(buf, 32, "CHG");
+      else if (s_batt_charging)
+        snprintf(buf, 32, "%d%%+", s_batt_pct);
+      else
+        snprintf(buf, 32, "%d%%", s_batt_pct);
       break;
 
     case QUAD_TEMP:
-      if (settings.use_celsius) snprintf(buf, 32, "%d°C", s_temp_c);
-      else                       snprintf(buf, 32, "%d°F", s_temp_f);
+      if (!s_weather_loaded)
+        snprintf(buf, 32, settings.use_celsius ? "--\xc2\xb0""C" : "--\xc2\xb0""F");
+      else if (settings.use_celsius)
+        snprintf(buf, 32, "%d\xc2\xb0""C", s_temp_c);
+      else
+        snprintf(buf, 32, "%d\xc2\xb0""F", s_temp_f);
       break;
 
     case QUAD_DAY:
@@ -141,6 +156,14 @@ static void render_quadrant(int idx) {
       snprintf(buf, 32, "%s", s_seconds_str);
       break;
 
+    case QUAD_BLUETOOTH:
+      snprintf(buf, 32, s_bt_connected ? "BT" : "no BT");
+      break;
+
+    case QUAD_WEEK:
+      snprintf(buf, 32, "%s", s_week_str);
+      break;
+
     case QUAD_NONE:
     default:
       buf[0] = '\0';
@@ -186,8 +209,9 @@ static void update_time_display(struct tm *tick_time) {
   }
   text_layer_set_text(s_time_layer, s_time_buffer);
 
-  strftime(s_day_str,  sizeof(s_day_str),  "%A",    tick_time);
+  strftime(s_day_str,  sizeof(s_day_str),  "%a",    tick_time);
   strftime(s_date_str, sizeof(s_date_str), "%b %e", tick_time);
+  strftime(s_week_str, sizeof(s_week_str), "W%V",   tick_time);
 }
 
 // Used for initial population at window load — reads the current wall clock.
@@ -201,15 +225,20 @@ static void init_time_display(void) {
 // ─── Tick handler ───────────────────────────────────────────────────────────
 
 static void tick_handler(struct tm *tick_time, TimeUnits units_changed) {
-  if (units_changed & MINUTE_UNIT) {
-    update_time_display(tick_time);
-  }
-
-  // Always refresh the seconds string; it's only displayed when a quadrant
-  // is configured to show it, but keeping it current is cheap.
   snprintf(s_seconds_str, sizeof(s_seconds_str), ":%02d", tick_time->tm_sec);
 
-  update_all_quadrants();
+  if (units_changed & MINUTE_UNIT) {
+    // Time, day, date, and week may all have changed — full refresh.
+    update_time_display(tick_time);
+    update_all_quadrants();
+  } else {
+    // Only seconds ticked — re-render only slots that display seconds.
+    // Avoids 3 unnecessary text layer updates per second in seconds mode.
+    for (int i = 0; i < 4; i++) {
+      if ((QuadrantContent)settings.quad[i] == QUAD_SECONDS)
+        render_quadrant(i);
+    }
+  }
 
   // Trigger a weather refresh every 30 minutes.
   // Guard with tm_sec == 0 so this fires exactly once even when subscribed
@@ -225,7 +254,8 @@ static void tick_handler(struct tm *tick_time, TimeUnits units_changed) {
 // ─── Battery ────────────────────────────────────────────────────────────────
 
 static void update_battery(BatteryChargeState state) {
-  s_batt_pct = state.charge_percent;
+  s_batt_pct      = state.charge_percent;
+  s_batt_charging = state.is_charging;
   update_all_quadrants();
 }
 
@@ -260,6 +290,13 @@ static void health_handler(HealthEventType event, void *context) {
   update_all_quadrants();
 }
 #endif
+
+// ─── Bluetooth ──────────────────────────────────────────────────────────────
+
+static void connection_handler(bool connected) {
+  s_bt_connected = connected;
+  update_all_quadrants();
+}
 
 // ─── AppMessage ─────────────────────────────────────────────────────────────
 
@@ -332,8 +369,9 @@ static void inbox_received_callback(DictionaryIterator *iterator, void *context)
 
   // Weather data
   if (tempc_tuple && tempf_tuple) {
-    s_temp_c = (int)tempc_tuple->value->int32;
-    s_temp_f = (int)tempf_tuple->value->int32;
+    s_temp_c        = (int)tempc_tuple->value->int32;
+    s_temp_f        = (int)tempf_tuple->value->int32;
+    s_weather_loaded = true;
 
     if (conditions_tuple) {
       strncpy(s_conditions, conditions_tuple->value->cstring,
@@ -393,14 +431,11 @@ static void main_window_load(Window *window) {
 
   int half_w = bounds.size.w / 2;
 
-  // Quadrant rects: TL and TR are each a half-width column.
-  // BL spans the full width (left-aligned) so long strings like "Wednesday"
-  // are not truncated; BR sits on top in the right half (right-aligned).
   GRect quad_rects[4] = {
-    GRect(h_inset, top_y,    half_w - h_inset,             info_h), // TL
-    GRect(half_w,  top_y,    half_w - h_inset,             info_h), // TR
-    GRect(h_inset, bottom_y, bounds.size.w - h_inset * 2,  info_h), // BL
-    GRect(half_w,  bottom_y, half_w - h_inset,             info_h), // BR
+    GRect(h_inset, top_y,    half_w - h_inset, info_h), // TL
+    GRect(half_w,  top_y,    half_w - h_inset, info_h), // TR
+    GRect(h_inset, bottom_y, half_w - h_inset, info_h), // BL
+    GRect(half_w,  bottom_y, half_w - h_inset, info_h), // BR
   };
   GTextAlignment quad_aligns[4] = {
     GTextAlignmentLeft,  GTextAlignmentRight,
@@ -413,7 +448,8 @@ static void main_window_load(Window *window) {
     text_layer_set_text_color(s_quad_layer[i], GColorWhite);
     text_layer_set_text_alignment(s_quad_layer[i], quad_aligns[i]);
     text_layer_set_font(s_quad_layer[i],
-        fonts_get_system_font(FONT_KEY_GOTHIC_24));
+        fonts_get_system_font(
+            PBL_IF_ROUND_ELSE(FONT_KEY_GOTHIC_28_BOLD, FONT_KEY_GOTHIC_24)));
     layer_add_child(window_layer, text_layer_get_layer(s_quad_layer[i]));
   }
 
@@ -453,6 +489,11 @@ static void init(void) {
 
   battery_state_service_subscribe(update_battery);
 
+  connection_service_subscribe((ConnectionHandlers){
+    .pebble_app_connection_handler = connection_handler,
+  });
+  s_bt_connected = connection_service_peek_pebble_app_connection();
+
 #if defined(PBL_HEALTH)
   health_service_events_subscribe(health_handler, NULL);
   // Populate health values immediately rather than waiting for first event
@@ -463,6 +504,7 @@ static void init(void) {
 static void deinit(void) {
   tick_timer_service_unsubscribe();
   battery_state_service_unsubscribe();
+  connection_service_unsubscribe();
 #if defined(PBL_HEALTH)
   health_service_events_unsubscribe();
 #endif
