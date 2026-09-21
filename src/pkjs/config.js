@@ -92,7 +92,7 @@ module.exports = [
     ]
   },
 
-  // ── Weather API ──────────────────────────────────────────────────────────
+  // ── Weather ──────────────────────────────────────────────────────────────
   {
     type: 'section',
     items: [
@@ -102,18 +102,8 @@ module.exports = [
         size: 4
       },
       {
-        type: 'input',
-        messageKey: 'APIKEY',
-        label: 'OpenWeatherMap API key',
-        defaultValue: '',
-        attributes: {
-          placeholder: 'Your OWM API key',
-          type: 'text'
-        }
-      },
-      {
         type: 'text',
-        defaultValue: 'If you do not provide your own key, a default one will be used. The default key has a low daily call limit; if temperature readings stop working, get a free key at openweathermap.org.'
+        defaultValue: 'Temperature and conditions come from Open-Meteo.com for the phone\'s current location, refreshed every 30 minutes. No API key is needed.'
       }
     ]
   },

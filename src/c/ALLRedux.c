@@ -1,7 +1,10 @@
 #include <pebble.h>
 
 // Bump key when ClaySettings struct layout changes so old persisted data is ignored.
-#define SETTINGS_KEY 2
+#define SETTINGS_KEY 3
+// Previous layout (v2) carried a 64-byte OpenWeatherMap API key; load_settings()
+// migrates it once so users keep their quadrant/unit choices.
+#define SETTINGS_KEY_V2 2
 
 // ─── Quadrant slot indices ──────────────────────────────────────────────────
 
@@ -33,7 +36,6 @@ typedef enum {
 typedef struct ClaySettings {
   bool    use_celsius;
   bool    use_metric;
-  char    apikey[64];
   uint8_t quad[4];   // QuadrantContent per slot: TL, TR, BL, BR
 } ClaySettings;
 
@@ -69,22 +71,39 @@ static int  s_heart_rate  = 0;
 
 // ─── Settings ───────────────────────────────────────────────────────────────
 
+static void save_settings(void) {
+  persist_write_data(SETTINGS_KEY, &settings, sizeof(settings));
+}
+
 static void load_settings(void) {
   if (persist_exists(SETTINGS_KEY)) {
     persist_read_data(SETTINGS_KEY, &settings, sizeof(settings));
-  } else {
-    settings.use_celsius    = false;
-    settings.use_metric     = false;
-    settings.apikey[0]      = '\0';
-    settings.quad[SLOT_TL]  = QUAD_BATTERY;
-    settings.quad[SLOT_TR]  = QUAD_TEMP;
-    settings.quad[SLOT_BL]  = QUAD_DAY;
-    settings.quad[SLOT_BR]  = QUAD_DATE;
+    return;
   }
-}
 
-static void save_settings(void) {
-  persist_write_data(SETTINGS_KEY, &settings, sizeof(settings));
+  settings.use_celsius    = false;
+  settings.use_metric     = false;
+  settings.quad[SLOT_TL]  = QUAD_BATTERY;
+  settings.quad[SLOT_TR]  = QUAD_TEMP;
+  settings.quad[SLOT_BL]  = QUAD_DAY;
+  settings.quad[SLOT_BR]  = QUAD_DATE;
+
+  if (persist_exists(SETTINGS_KEY_V2)) {
+    // One-time migration from the layout that stored an OpenWeatherMap key.
+    struct {
+      bool    use_celsius;
+      bool    use_metric;
+      char    apikey[64];
+      uint8_t quad[4];
+    } v2;
+    if (persist_read_data(SETTINGS_KEY_V2, &v2, sizeof(v2)) == (int)sizeof(v2)) {
+      settings.use_celsius = v2.use_celsius;
+      settings.use_metric  = v2.use_metric;
+      memcpy(settings.quad, v2.quad, sizeof(settings.quad));
+    }
+    persist_delete(SETTINGS_KEY_V2);
+    save_settings();
+  }
 }
 
 // ─── Quadrant rendering ─────────────────────────────────────────────────────
@@ -309,14 +328,13 @@ static int tuple_as_int(Tuple *t) {
 }
 
 static void inbox_received_callback(DictionaryIterator *iterator, void *context) {
-  // Weather data (sent by JS on each fetch)
+  // Weather data (sent by JS on each Open-Meteo fetch)
   Tuple *tempc_tuple      = dict_find(iterator, MESSAGE_KEY_TEMPERATUREC);
   Tuple *tempf_tuple      = dict_find(iterator, MESSAGE_KEY_TEMPERATUREF);
   Tuple *conditions_tuple = dict_find(iterator, MESSAGE_KEY_CONDITIONS);
 
   // Clay settings (sent when the user saves config)
   Tuple *use_celsius_tuple = dict_find(iterator, MESSAGE_KEY_USECELSIUS);
-  Tuple *apikey_tuple      = dict_find(iterator, MESSAGE_KEY_APIKEY);
   Tuple *use_metric_tuple  = dict_find(iterator, MESSAGE_KEY_USEMETRIC);
   Tuple *quad_tl_tuple     = dict_find(iterator, MESSAGE_KEY_QUAD_TL);
   Tuple *quad_tr_tuple     = dict_find(iterator, MESSAGE_KEY_QUAD_TR);
@@ -328,13 +346,6 @@ static void inbox_received_callback(DictionaryIterator *iterator, void *context)
 
   if (use_celsius_tuple) {
     settings.use_celsius = (use_celsius_tuple->value->int32 != 0);
-    settings_changed = true;
-  }
-
-  if (apikey_tuple) {
-    strncpy(settings.apikey, apikey_tuple->value->cstring,
-            sizeof(settings.apikey) - 1);
-    settings.apikey[sizeof(settings.apikey) - 1] = '\0';
     settings_changed = true;
   }
 
@@ -396,6 +407,37 @@ static void outbox_sent_callback(DictionaryIterator *iterator, void *context) {
   APP_LOG(APP_LOG_LEVEL_DEBUG, "Outbox send success");
 }
 
+// ─── Fonts ──────────────────────────────────────────────────────────────────
+// The reference design (144x168) uses the system fonts Bitham 42 Light for the
+// time and Gothic 24 (Gothic 28 Bold on round screens) for the quadrants.
+// Emery (Pebble Time 2, 200x228) is 228/168 = 1.357x taller, so it gets the
+// same two typefaces scaled to 57px / 33px. Those are bundled as app resources
+// (resources/fonts/*.pbf, regenerated with tools/fontscale/) because the
+// firmware ships no larger sizes of either face.
+
+static GFont s_time_font;
+static GFont s_quad_font;
+
+static void load_fonts(void) {
+#if defined(PBL_PLATFORM_EMERY)
+  s_time_font = fonts_load_custom_font(
+      resource_get_handle(RESOURCE_ID_FONT_BITHAM_57_LIGHT));
+  s_quad_font = fonts_load_custom_font(
+      resource_get_handle(RESOURCE_ID_FONT_GOTHIC_33));
+#else
+  s_time_font = fonts_get_system_font(FONT_KEY_BITHAM_42_LIGHT);
+  s_quad_font = fonts_get_system_font(
+      PBL_IF_ROUND_ELSE(FONT_KEY_GOTHIC_28_BOLD, FONT_KEY_GOTHIC_24));
+#endif
+}
+
+static void unload_fonts(void) {
+#if defined(PBL_PLATFORM_EMERY)
+  fonts_unload_custom_font(s_time_font);
+  fonts_unload_custom_font(s_quad_font);
+#endif
+}
+
 // ─── Window ─────────────────────────────────────────────────────────────────
 
 static void main_window_load(Window *window) {
@@ -403,10 +445,21 @@ static void main_window_load(Window *window) {
   GRect bounds = layer_get_bounds(window_layer);
 
   window_set_background_color(window, GColorBlack);
+  load_fonts();
+
+  // Layout ──────────────────────────────────────────────────────────────────
+  // The geometry below was designed on a 144x168 screen. On taller rectangular
+  // screens (Emery, 200x228) every vertical metric is scaled by h/168, rounded
+  // to the nearest pixel, so the face keeps exactly the same proportions;
+  // horizontal positions already follow bounds.size.w. Round screens keep
+  // their hand-tuned values. On 144x168 SCALE_Y is the identity.
+#define REF_H 168
+#define SCALE_Y(px) \
+  PBL_IF_RECT_ELSE((((px) * bounds.size.h) + REF_H / 2) / REF_H, (px))
 
   // Center time band ────────────────────────────────────────────────────────
-  const int band_height  = 48;
-  const int band_frame_h = band_height + 4;
+  const int band_height  = SCALE_Y(48);  // nominal height, used for centring
+  const int band_frame_h = SCALE_Y(52);  // visible white band (48 + 4)
   int band_y = (bounds.size.h - band_height) / 2;
 
   s_time_layer = text_layer_create(
@@ -414,20 +467,19 @@ static void main_window_load(Window *window) {
   text_layer_set_background_color(s_time_layer, GColorWhite);
   text_layer_set_text_color(s_time_layer, GColorBlack);
   text_layer_set_text_alignment(s_time_layer, GTextAlignmentCenter);
-  text_layer_set_font(s_time_layer,
-      fonts_get_system_font(FONT_KEY_BITHAM_42_LIGHT));
+  text_layer_set_font(s_time_layer, s_time_font);
   layer_add_child(window_layer, text_layer_get_layer(s_time_layer));
 
   // Info row positions ──────────────────────────────────────────────────────
-  const int info_h = 30;
+  const int info_h = SCALE_Y(30);
   int top_y, bottom_y, h_inset;
 
-  // Hug the band on all platforms — preserves the original tight aesthetic
-  // and scales automatically to any screen height.
-  // On round, h_inset pulls text inward to clear the circle edge at this y.
+  // Hug the band on all platforms — preserves the original tight aesthetic.
+  // On round, h_inset pulls text inward to clear the circle edge at this y
+  // (22px on Chalk).
   top_y    = band_y - info_h;
-  bottom_y = band_y + band_frame_h - 4;
-  h_inset  = PBL_IF_ROUND_ELSE(22, 0);
+  bottom_y = band_y + band_frame_h - SCALE_Y(4);
+  h_inset  = PBL_IF_ROUND_ELSE(bounds.size.w / 8, 0);
 
   int half_w = bounds.size.w / 2;
 
@@ -447,11 +499,12 @@ static void main_window_load(Window *window) {
     text_layer_set_background_color(s_quad_layer[i], GColorClear);
     text_layer_set_text_color(s_quad_layer[i], GColorWhite);
     text_layer_set_text_alignment(s_quad_layer[i], quad_aligns[i]);
-    text_layer_set_font(s_quad_layer[i],
-        fonts_get_system_font(
-            PBL_IF_ROUND_ELSE(FONT_KEY_GOTHIC_28_BOLD, FONT_KEY_GOTHIC_24)));
+    text_layer_set_font(s_quad_layer[i], s_quad_font);
     layer_add_child(window_layer, text_layer_get_layer(s_quad_layer[i]));
   }
+
+#undef SCALE_Y
+#undef REF_H
 
   // Initial content — window_stack_push is synchronous so these are the
   // only calls needed; the duplicate calls that were previously in init()
@@ -464,6 +517,7 @@ static void main_window_load(Window *window) {
 static void main_window_unload(Window *window) {
   text_layer_destroy(s_time_layer);
   for (int i = 0; i < 4; i++) text_layer_destroy(s_quad_layer[i]);
+  unload_fonts();
 }
 
 // ─── Init / Deinit ──────────────────────────────────────────────────────────

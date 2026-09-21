@@ -1,8 +1,10 @@
 package.json
 package-lock.json
-src/pkjs/index.js
 
 node_modules/
 build/
 .lock*
 .claude/
+# fontscale tooling scratch
+tools/fontscale/.venv/
+tools/fontscale/src/
